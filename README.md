@@ -1,2 +1,2 @@
 # MalDNS
-Written to crack a specific software.
+*used in combination with a server to redirect requests to.*

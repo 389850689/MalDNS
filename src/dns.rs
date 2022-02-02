@@ -1,7 +1,6 @@
-#[derive(Clone)]
-struct PacketParser {
+struct PacketParser<'a> {
     /// A buffer that *should* contain a DNS packet.
-    buffer: [u8; 512],
+    buffer: &'a [u8; 512],
     /// A pointer to an unparsed packet position.
     current: usize,
 }
@@ -74,9 +73,9 @@ impl Record {
     fn new() -> Self { Self { ..Default::default() } }
 }
 
-impl PacketParser {
-    fn new() -> Self {
-        Self { buffer: [0; 512], current: 0 }
+impl<'a> PacketParser<'a> {
+    fn new(buffer: &'a [u8; 512])-> Self {
+        Self { buffer, current: 0 }
     } 
 
     /// Returns byte at current pointer position.
@@ -131,5 +130,7 @@ impl PacketParser {
 }
 
 pub fn test() {
-    let mut x = PacketParser::new();
+    let mut buf: [u8; 512] = [0; 512]; 
+    buf[..28].copy_from_slice(include_bytes!("query_packet.txt"));
+    let mut x = PacketParser::new(&buf).parse();
 }

@@ -1,4 +1,5 @@
 use deku::prelude::*;
+use std::backtrace::Backtrace;
 
 struct PacketParser<'a> {
     /// A buffer that *should* contain a DNS packet.
@@ -52,13 +53,10 @@ struct Header {
     ar_count: u16
 }
 
-impl Header {
-    fn new() -> Self { Self { ..Default::default() } }
-}
-
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, DekuRead, DekuWrite)]
 struct Question {
     // domain name
+    #[deku(until = "|v: &u8| *v == 0")] 
     name: Vec<u8>,
     // type of query
     ty: u16,
@@ -66,15 +64,11 @@ struct Question {
     class: u16,
 }
 
-impl Question {
-    fn new() -> Self { Self { ..Default::default() } }
-}
-
-/// Only need to support the A record.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, DekuRead, DekuWrite)]
 struct Record {
     // domain name
-    name: String,
+    // TODO: change this to a Vec<u8> again after testing.
+    name: u16,  
     // name of record
     ty: u16,
     // type of record
@@ -84,11 +78,8 @@ struct Record {
     // length of data 
     len: u16,
     // the data for an A record
-    ip: u32
-}
-
-impl Record {
-    fn new() -> Self { Self { ..Default::default() } }
+    #[deku(count = "len", endian = "big")]
+    data: Vec<u8>
 }
 
 impl<'a> PacketParser<'a> {
@@ -131,23 +122,41 @@ impl<'a> PacketParser<'a> {
     }
 
     /// It's like advance but with n steps, and returns a slice of bytes.
-    fn advance_n(&mut self, n: usize) -> Option<&[u8]> {
+    fn advance_n(&mut self, n: usize) -> Result<&[u8], String> {
         match self.buffer.get(self.current + n).copied() {
-            None => None,
+            None => Err(format!("couldn't advance far enough. [{}/{}]\n\n{}", 
+                    self.current + n, self.buffer.len(), 
+                    Backtrace::force_capture())),
             Some(_) => { 
                 self.current += n; 
-                Some(&self.buffer[self.current - n..self.current]) 
+                Ok(&self.buffer[self.current - n..self.current]) 
             },
         } 
     }
 
-    /// Deserializes packet bytes. 
-    fn parse(&mut self) -> Result<DNSPacket, String> {
+    fn parse_name(&self) -> Result<Vec<u8>, &str> {
+        if 1 == 1 {} 
+        Ok(vec![0])
+    }
+
+    /// Parses packet bytes and turns them in a `DNSPacket`. 
+    fn deserialize(&mut self) -> Result<DNSPacket, String> {
         /* Parse Header */
-        let header_bytes = self.advance_n(12)
-                               .unwrap();
+        let header_bytes = self.advance_n(12)?;
 
         let (_, header) = Header::from_bytes((header_bytes.as_ref(), 0)).unwrap();
+
+        /* Parse Question Section */
+        let mut questions: Vec<Question> = Vec::with_capacity(header.qd_count as usize);
+
+        for _ in 0..questions.capacity() {
+            let mut question_bytes = self.parse_name()?;
+
+            // concatenates the next 4 bytes after the name field onto the name bytes.
+            question_bytes.extend_from_slice(self.advance_n(4)?);
+
+            questions.push(Question::try_from(question_bytes.as_ref()).unwrap());
+        }
 
         Err(String::new())
     }
@@ -155,8 +164,8 @@ impl<'a> PacketParser<'a> {
 
 pub fn test() {
     let mut buf: [u8; 512] = [0; 512]; 
-    buf[..44].copy_from_slice(include_bytes!("response_packet.txt"));
-    let x = PacketParser::new(&buf).parse();
+    buf[..69].copy_from_slice(include_bytes!("response_packet.txt"));
+    let x = PacketParser::new(&buf).deserialize();
     match x {
         Ok(p) => println!("{:#?}", p),
         Err(e) => println!("Error: {}", e)

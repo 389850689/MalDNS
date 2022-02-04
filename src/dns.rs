@@ -1,3 +1,5 @@
+use deku::prelude::*;
+
 struct PacketParser<'a> {
     /// A buffer that *should* contain a DNS packet.
     buffer: &'a [u8; 512],
@@ -18,12 +20,28 @@ impl DNSPacket {
     fn new() -> Self { Self { ..Default::default() } }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, DekuRead, DekuWrite)]
+#[deku(endian = "big")]
 struct Header {
     // packet identifier
     id: u16,
-    // flags
-    qr: bool, opcode: u8, aa: bool, tc: bool, rd: bool, ra: bool, z: u8, r_code: u8,
+        // flags
+        #[deku(bits = "1")]
+        qr: u8, 
+        #[deku(bits = "4")]
+        opcode: u8, 
+        #[deku(bits = "1")]
+        aa: u8, 
+        #[deku(bits = "1")]
+        tc: u8, 
+        #[deku(bits = "1")]
+        rd: u8, 
+        #[deku(bits = "1")]
+        ra: u8, 
+        #[deku(bits = "3")]
+        z: u8, 
+        #[deku(bits = "4")]
+        r_code: u8,
     // question count
     qd_count: u16,
     // answer count
@@ -38,10 +56,10 @@ impl Header {
     fn new() -> Self { Self { ..Default::default() } }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 struct Question {
     // domain name
-    name: String,
+    name: Vec<u8>,
     // type of query
     ty: u16,
     // class of query 
@@ -124,13 +142,23 @@ impl<'a> PacketParser<'a> {
     }
 
     /// Deserializes packet bytes. 
-    fn parse(&self) -> Result<DNSPacket, String> {
+    fn parse(&mut self) -> Result<DNSPacket, String> {
+        /* Parse Header */
+        let header_bytes = self.advance_n(12)
+                               .unwrap();
+
+        let (_, header) = Header::from_bytes((header_bytes.as_ref(), 0)).unwrap();
+
         Err(String::new())
     }
 }
 
 pub fn test() {
     let mut buf: [u8; 512] = [0; 512]; 
-    buf[..28].copy_from_slice(include_bytes!("query_packet.txt"));
-    let mut x = PacketParser::new(&buf).parse();
+    buf[..44].copy_from_slice(include_bytes!("response_packet.txt"));
+    let x = PacketParser::new(&buf).parse();
+    match x {
+        Ok(p) => println!("{:#?}", p),
+        Err(e) => println!("Error: {}", e)
+    }
 }

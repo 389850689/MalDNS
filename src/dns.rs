@@ -1,4 +1,6 @@
 use deku::prelude::*;
+
+use std::collections::HashMap;
 use std::backtrace::Backtrace;
 
 struct PacketParser<'a> {
@@ -6,6 +8,8 @@ struct PacketParser<'a> {
     buffer: &'a [u8; 512],
     /// A pointer to an unparsed packet position.
     current: usize,
+    /// Holds offsets that map to decompressed names.
+    decompress_map: HashMap<u8, Vec<u8>>,
 }
 
 #[derive(Debug, Default)]
@@ -18,7 +22,14 @@ struct DNSPacket {
 }
 
 impl DNSPacket {
-    fn new() -> Self { Self { ..Default::default() } }
+    fn new(header: Header, 
+        questions: Vec<Question>, 
+        answers: Vec<Record>, 
+        authorities: Vec<Record>, 
+        additionals: Vec<Record>
+    ) -> Self { 
+        Self { header, questions, answers, authorities, additionals } 
+    }
 }
 
 #[derive(Debug, Default, PartialEq, DekuRead, DekuWrite)]
@@ -54,6 +65,7 @@ struct Header {
 }
 
 #[derive(Debug, Default, PartialEq, DekuRead, DekuWrite)]
+#[deku(endian = "big")]
 struct Question {
     // domain name
     #[deku(until = "|v: &u8| *v == 0")] 
@@ -65,6 +77,7 @@ struct Question {
 }
 
 #[derive(Debug, Default, PartialEq, DekuRead, DekuWrite)]
+#[deku(endian = "big")]
 struct Record {
     // domain name
     // TODO: change this to a Vec<u8> again after testing.
@@ -84,44 +97,27 @@ struct Record {
 
 impl<'a> PacketParser<'a> {
     fn new(buffer: &'a [u8; 512])-> Self {
-        Self { buffer, current: 0 }
+        Self { buffer, current: 0, decompress_map: HashMap::new() }
     } 
-
+ 
     /// Returns byte at current pointer position.
     fn get_current_byte(&self) -> u8 {
         self.buffer[self.current]
     }
 
-    /// Returns if current pointer position is at the end of the buffer.
-    fn at_end(&self) -> bool {
-        self.current >= self.buffer.len()
+    /// Returns whether or not current byte is a compressed name jump opcode.
+    fn is_current_jmp(&mut self) -> bool {
+       self.get_current_byte() & 0xC0 == 0xC0 
     }
 
-    /// Jumps to a position in the buffer (an offset).
-    /// 
-    /// Sets the current pointer to `position` and returns the byte at that position.
-    fn jmp(&mut self, position: usize) -> Option<u8> {
-        match self.buffer.get(position).copied() {
-            None => None,
-            Some(byte) => { self.current = position; Some(byte) }
-        }
+    /// Shows byte one byte ahead without consuming it.
+    fn peek(&self) -> Option<u8> {
+        self.buffer.get(self.current + 1).copied() 
     }
 
-    /// Gets next byte from buffer.
+    /// Gets range of bytes starting from `current` to `n`.
     ///
-    /// Makes sure it doesn't overstep its bounds out of the buffer, returns `None` at the EOF.
-    fn advance(&mut self) -> Option<u8> {
-        // TODO: find an actual solution to this.
-        if self.current == 0 { self.current += 1; return Some(self.buffer[0]); }
-
-        match self.buffer.get(self.current + 1).copied() {
-            None => None,
-            // TODO: find a more concise way to increment the current pointer.
-            Some(byte) => { self.current += 1; Some(byte) },
-        } 
-    }
-
-    /// It's like advance but with n steps, and returns a slice of bytes.
+    /// Makes sure it doesn't overstep its bounds out of the buffer.
     fn advance_n(&mut self, n: usize) -> Result<&[u8], String> {
         match self.buffer.get(self.current + n).copied() {
             None => Err(format!("couldn't advance far enough. [{}/{}]\n\n{}", 
@@ -134,9 +130,31 @@ impl<'a> PacketParser<'a> {
         } 
     }
 
-    fn parse_name(&self) -> Result<Vec<u8>, &str> {
-        if 1 == 1 {} 
-        Ok(vec![0])
+    fn parse_name(&mut self) -> Result<Vec<u8>, String> {
+        if self.is_current_jmp() { 
+            /*
+            // set current to string length, return to caller. 
+            let name = self.decompress_map
+                           .get(&mut self.peek().unwrap())
+                           .unwrap();
+            */
+            return Ok(self.advance_n(2)?.to_vec());
+        } 
+
+        let mut name: Vec<u8> = Vec::new();
+        
+        while self.get_current_byte() != 0 {
+            let part = self.advance_n(self.get_current_byte() as usize + 1)?;
+            name.extend_from_slice(part);
+        }
+
+        // NOTE: may want to add another 0 onto that for serialization.
+        // NOTE: just like, please, fix this later.
+        name.push(0); self.advance_n(1)?;
+        
+        self.decompress_map.insert(self.current as u8, name.clone());
+        
+        Ok(name)
     }
 
     /// Parses packet bytes and turns them in a `DNSPacket`. 
@@ -157,8 +175,31 @@ impl<'a> PacketParser<'a> {
 
             questions.push(Question::try_from(question_bytes.as_ref()).unwrap());
         }
+        
+        /* Parse Answer Section */
+        let mut answers: Vec<Record> = Vec::with_capacity(header.an_count as usize);
 
-        Err(String::new())
+        for _ in 0..answers.capacity() {
+            let mut answers_bytes = self.parse_name()?;
+
+            answers_bytes.extend_from_slice(self.advance_n(8)?);
+
+            let length = u16::from_be_bytes(self.advance_n(2)?.try_into().unwrap());
+
+            let data = self.advance_n(length as usize)?;
+
+            answers_bytes.append(&mut [&length.to_be_bytes()[..], data].concat());
+
+            answers.push(Record::try_from(answers_bytes.as_ref()).unwrap());
+        }
+
+        /* Parse Authority Section */
+        let mut authorities: Vec<Record> = Vec::with_capacity(header.ns_count as usize);
+
+        /* Parse Additional Section */
+        let mut additionals: Vec<Record> = Vec::with_capacity(header.ar_count as usize);
+        
+        Ok(DNSPacket::new(header, questions, answers, authorities, additionals))
     }
 }
 
@@ -167,7 +208,7 @@ pub fn test() {
     buf[..69].copy_from_slice(include_bytes!("response_packet.txt"));
     let x = PacketParser::new(&buf).deserialize();
     match x {
-        Ok(p) => println!("{:#?}", p),
-        Err(e) => println!("Error: {}", e)
+        Ok(p) => println!("{:#X?}", p),
+        Err(e) => println!("\nError: {}", e)
     }
 }

@@ -3,14 +3,6 @@ use deku::prelude::*;
 use std::collections::HashMap;
 use std::backtrace::Backtrace;
 
-struct PacketParser<'a> {
-    /// A buffer that *should* contain a DNS packet.
-    buffer: &'a [u8; 512],
-    /// A pointer to an unparsed packet position.
-    current: usize,
-    /// Holds offsets that map to decompressed names.
-    decompress_map: HashMap<u8, Vec<u8>>,
-}
 
 #[derive(Debug, Default)]
 struct DNSPacket {
@@ -21,6 +13,14 @@ struct DNSPacket {
     additionals: Vec<Record>,
 }
 
+/// Creates one vector of bytes from multiple deserialized structs.
+fn monolithize<T: DekuContainerWrite>(vector: &Vec<T>) -> Vec<u8> {
+    vector.iter()
+          .map(|s| s.to_bytes().unwrap())
+          .reduce(|acc, i| { [acc, i].concat() })
+          .unwrap_or(vec![])
+}
+
 impl DNSPacket {
     fn new(header: Header, 
         questions: Vec<Question>, 
@@ -29,6 +29,16 @@ impl DNSPacket {
         additionals: Vec<Record>
     ) -> Self { 
         Self { header, questions, answers, authorities, additionals } 
+    }
+
+    /// Turns a `DNSPacket` into a slice of bytes.
+    pub fn serialize(&self) -> Vec<u8> {
+        // TODO: maybe return Option or Result and handle the unwrap.
+        [self.header.to_bytes().unwrap(), 
+            monolithize(&self.questions), 
+            monolithize(&self.answers), 
+            monolithize(&self.authorities), 
+            monolithize(&self.additionals)].concat()
     }
 }
 
@@ -80,7 +90,7 @@ struct Question {
 #[deku(endian = "big")]
 struct Record {
     // domain name
-    // TODO: change this to a Vec<u8> again after testing.
+    // TODO: create a temp variable whose value is parse_name.len().
     name: u16,  
     // name of record
     ty: u16,
@@ -95,8 +105,17 @@ struct Record {
     data: Vec<u8>
 }
 
+struct PacketParser<'a> {
+    /// A buffer that *should* contain a DNS packet.
+    buffer: &'a [u8; 512],
+    /// A pointer to an unparsed packet position.
+    current: usize,
+    /// Holds offsets that map to decompressed names.
+    decompress_map: HashMap<u8, Vec<u8>>,
+}
+
 impl<'a> PacketParser<'a> {
-    fn new(buffer: &'a [u8; 512])-> Self {
+    pub fn new(buffer: &'a [u8; 512])-> Self {
         Self { buffer, current: 0, decompress_map: HashMap::new() }
     } 
  
@@ -182,7 +201,7 @@ impl<'a> PacketParser<'a> {
     }
 
     /// Parses packet bytes and turns them in a `DNSPacket`. 
-    fn deserialize(&mut self) -> Result<DNSPacket, String> {
+    pub fn deserialize(&mut self) -> Result<DNSPacket, String> {
         /* Parse Header */
         let header_bytes = self.advance_n(12)?;
 
@@ -211,4 +230,12 @@ impl<'a> PacketParser<'a> {
         
         Ok(DNSPacket::new(header, questions, answers, authorities, additionals))
     }
+}
+
+
+pub fn test() {
+    let mut buf: [u8; 512] = [0; 512]; 
+    buf[..69].copy_from_slice(include_bytes!("response_packet.txt"));
+    let x = PacketParser::new(&buf).deserialize();
+    x.unwrap().serialize();
 }

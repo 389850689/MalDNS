@@ -39,20 +39,28 @@ struct Header {
     id: u16,
         // flags
         #[deku(bits = "1")]
+        // query response
         qr: u8, 
         #[deku(bits = "4")]
+        // operation code
         opcode: u8, 
         #[deku(bits = "1")]
+        // authoritive answer
         aa: u8, 
         #[deku(bits = "1")]
+        // truncated message
         tc: u8, 
         #[deku(bits = "1")]
+        // recursion desired
         rd: u8, 
         #[deku(bits = "1")]
+        // recursion available
         ra: u8, 
         #[deku(bits = "3")]
+        // reserved (edns)
         z: u8, 
         #[deku(bits = "4")]
+        // response code
         r_code: u8,
     // question count
     qd_count: u16,
@@ -115,13 +123,22 @@ impl<'a> PacketParser<'a> {
         self.buffer.get(self.current + 1).copied() 
     }
 
+    /// Count the number of bytes until peeked byte = 0.
+    fn get_name_length(&self) -> usize {
+        self.buffer
+            .iter()
+            .skip(self.current)
+            .take_while(|&&b| b != 0)
+            .count() + 1
+    }
+
     /// Gets range of bytes starting from `current` to `n`.
     ///
     /// Makes sure it doesn't overstep its bounds out of the buffer.
     fn advance_n(&mut self, n: usize) -> Result<&[u8], String> {
         match self.buffer.get(self.current + n).copied() {
             None => Err(format!("couldn't advance far enough. [{}/{}]\n\n{}", 
-                    self.current + n, self.buffer.len(), 
+                    self.current + n + 1, self.buffer.len(), 
                     Backtrace::force_capture())),
             Some(_) => { 
                 self.current += n; 
@@ -129,11 +146,13 @@ impl<'a> PacketParser<'a> {
             },
         } 
     }
-
+    
+    /// Parses variable length name field from bytes.
+    ///
+    /// Increments position pointer by name length and returns vector of name bytes.
     fn parse_name(&mut self) -> Result<Vec<u8>, String> {
         if self.is_current_jmp() { 
             /*
-            // set current to string length, return to caller. 
             let name = self.decompress_map
                            .get(&mut self.peek().unwrap())
                            .unwrap();
@@ -141,17 +160,10 @@ impl<'a> PacketParser<'a> {
             return Ok(self.advance_n(2)?.to_vec());
         } 
 
-        let mut name: Vec<u8> = Vec::new();
+        let name: Vec<u8> = self.advance_n(self.get_name_length())?.to_vec();
         
-        while self.get_current_byte() != 0 {
-            let part = self.advance_n(self.get_current_byte() as usize + 1)?;
-            name.extend_from_slice(part);
-        }
-
-        // NOTE: may want to add another 0 onto that for serialization.
-        // NOTE: just like, please, fix this later.
-        name.push(0); self.advance_n(1)?;
-        
+        // NOTE: currently inserts current after its be modified, need to log before or subtract
+        // by name length, also do something about the clone there, later. 
         self.decompress_map.insert(self.current as u8, name.clone());
         
         Ok(name)

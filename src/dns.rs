@@ -11,6 +11,36 @@ fn monolithize<T: DekuContainerWrite>(vector: &Vec<T>) -> Vec<u8> {
           .unwrap_or(vec![])
 }
 
+#[derive(Debug, Default)]
+struct DNSPacket {
+    header: Header,
+    questions: Vec<Question>, 
+    answers: Vec<Record>,
+    authorities: Vec<Record>,
+    additionals: Vec<Record>,
+}
+
+impl DNSPacket {
+    fn new(header: Header, 
+        questions: Vec<Question>, 
+        answers: Vec<Record>, 
+        authorities: Vec<Record>, 
+        additionals: Vec<Record>
+    ) -> Self { 
+        Self { header, questions, answers, authorities, additionals } 
+    }
+
+    /// Turns a `DNSPacket` into a slice of bytes.
+    pub fn serialize(&self) -> Vec<u8> {
+        // TODO: maybe return Option or Result and handle the unwrap.
+        [self.header.to_bytes().unwrap(), 
+            monolithize(&self.questions), 
+            monolithize(&self.answers), 
+            monolithize(&self.authorities), 
+            monolithize(&self.additionals)].concat()
+    }
+}
+
 #[derive(Debug, Default, PartialEq, DekuRead, DekuWrite)]
 #[deku(endian = "big")]
 struct Header {
@@ -72,36 +102,6 @@ struct Record {
     // the data for an A record
     #[deku(count = "len", endian = "big")]
     data: Vec<u8>
-}
-
-#[derive(Debug, Default)]
-struct DNSPacket {
-    header: Header,
-    questions: Vec<Question>, 
-    answers: Vec<Record>,
-    authorities: Vec<Record>,
-    additionals: Vec<Record>,
-}
-
-impl DNSPacket {
-    fn new(header: Header, 
-        questions: Vec<Question>, 
-        answers: Vec<Record>, 
-        authorities: Vec<Record>, 
-        additionals: Vec<Record>
-    ) -> Self { 
-        Self { header, questions, answers, authorities, additionals } 
-    }
-
-    /// Turns a `DNSPacket` into a slice of bytes.
-    pub fn serialize(&self) -> Vec<u8> {
-        // TODO: maybe return Option or Result and handle the unwrap.
-        [self.header.to_bytes().unwrap(), 
-            monolithize(&self.questions), 
-            monolithize(&self.answers), 
-            monolithize(&self.authorities), 
-            monolithize(&self.additionals)].concat()
-    }
 }
 
 struct PacketParser<'a> {
@@ -220,10 +220,8 @@ impl<'a> PacketParser<'a> {
         
         /* Parse Answer Section */
         let answers = self.parse_record(header.an_count as usize)?;
-
         /* Parse Authority Section */
         let authorities = self.parse_record(header.ns_count as usize)?;
-
         /* Parse Additional Section */
         let additionals = self.parse_record(header.ar_count as usize)?;
         

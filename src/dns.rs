@@ -3,43 +3,12 @@ use deku::prelude::*;
 use std::collections::HashMap;
 use std::backtrace::Backtrace;
 
-
-#[derive(Debug, Default)]
-struct DNSPacket {
-    header: Header,
-    questions: Vec<Question>, 
-    answers: Vec<Record>,
-    authorities: Vec<Record>,
-    additionals: Vec<Record>,
-}
-
 /// Creates one vector of bytes from multiple deserialized structs.
 fn monolithize<T: DekuContainerWrite>(vector: &Vec<T>) -> Vec<u8> {
     vector.iter()
           .map(|s| s.to_bytes().unwrap())
           .reduce(|acc, i| { [acc, i].concat() })
           .unwrap_or(vec![])
-}
-
-impl DNSPacket {
-    fn new(header: Header, 
-        questions: Vec<Question>, 
-        answers: Vec<Record>, 
-        authorities: Vec<Record>, 
-        additionals: Vec<Record>
-    ) -> Self { 
-        Self { header, questions, answers, authorities, additionals } 
-    }
-
-    /// Turns a `DNSPacket` into a slice of bytes.
-    pub fn serialize(&self) -> Vec<u8> {
-        // TODO: maybe return Option or Result and handle the unwrap.
-        [self.header.to_bytes().unwrap(), 
-            monolithize(&self.questions), 
-            monolithize(&self.answers), 
-            monolithize(&self.authorities), 
-            monolithize(&self.additionals)].concat()
-    }
 }
 
 #[derive(Debug, Default, PartialEq, DekuRead, DekuWrite)]
@@ -103,6 +72,36 @@ struct Record {
     // the data for an A record
     #[deku(count = "len", endian = "big")]
     data: Vec<u8>
+}
+
+#[derive(Debug, Default)]
+struct DNSPacket {
+    header: Header,
+    questions: Vec<Question>, 
+    answers: Vec<Record>,
+    authorities: Vec<Record>,
+    additionals: Vec<Record>,
+}
+
+impl DNSPacket {
+    fn new(header: Header, 
+        questions: Vec<Question>, 
+        answers: Vec<Record>, 
+        authorities: Vec<Record>, 
+        additionals: Vec<Record>
+    ) -> Self { 
+        Self { header, questions, answers, authorities, additionals } 
+    }
+
+    /// Turns a `DNSPacket` into a slice of bytes.
+    pub fn serialize(&self) -> Vec<u8> {
+        // TODO: maybe return Option or Result and handle the unwrap.
+        [self.header.to_bytes().unwrap(), 
+            monolithize(&self.questions), 
+            monolithize(&self.answers), 
+            monolithize(&self.authorities), 
+            monolithize(&self.additionals)].concat()
+    }
 }
 
 struct PacketParser<'a> {
@@ -230,12 +229,4 @@ impl<'a> PacketParser<'a> {
         
         Ok(DNSPacket::new(header, questions, answers, authorities, additionals))
     }
-}
-
-
-pub fn test() {
-    let mut buf: [u8; 512] = [0; 512]; 
-    buf[..69].copy_from_slice(include_bytes!("response_packet.txt"));
-    let x = PacketParser::new(&buf).deserialize();
-    x.unwrap().serialize();
 }

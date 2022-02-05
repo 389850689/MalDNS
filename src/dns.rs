@@ -39,29 +39,21 @@ struct Header {
     id: u16,
         // flags
         #[deku(bits = "1")]
-        // query response
-        qr: u8, 
+        qr: u8,     // query response 
         #[deku(bits = "4")]
-        // operation code
-        opcode: u8, 
+        opcode: u8, // operation code
         #[deku(bits = "1")]
-        // authoritive answer
-        aa: u8, 
+        aa: u8,     // authoritive answer
         #[deku(bits = "1")]
-        // truncated message
-        tc: u8, 
+        tc: u8,     // truncated message 
         #[deku(bits = "1")]
-        // recursion desired
-        rd: u8, 
+        rd: u8,     // recursion desired
         #[deku(bits = "1")]
-        // recursion available
-        ra: u8, 
+        ra: u8,     // recursion available
         #[deku(bits = "3")]
-        // reserved (edns)
-        z: u8, 
+        z: u8,      // reserved (edns)
         #[deku(bits = "4")]
-        // response code
-        r_code: u8,
+        r_code: u8, // response code
     // question count
     qd_count: u16,
     // answer count
@@ -152,21 +144,41 @@ impl<'a> PacketParser<'a> {
     /// Increments position pointer by name length and returns vector of name bytes.
     fn parse_name(&mut self) -> Result<Vec<u8>, String> {
         if self.is_current_jmp() { 
-            /*
-            let name = self.decompress_map
-                           .get(&mut self.peek().unwrap())
-                           .unwrap();
-            */
             return Ok(self.advance_n(2)?.to_vec());
         } 
 
         let name: Vec<u8> = self.advance_n(self.get_name_length())?.to_vec();
         
-        // NOTE: currently inserts current after its be modified, need to log before or subtract
+        // NOTE: currently inserts `current` after its be modified, need to log before or subtract
         // by name length, also do something about the clone there, later. 
         self.decompress_map.insert(self.current as u8, name.clone());
         
         Ok(name)
+    }
+
+    fn parse_record(&mut self, record_count: usize) -> Result<Vec<Record>, String> {
+        let mut records: Vec<Record> = Vec::with_capacity(record_count);
+
+        for _ in 0..records.capacity() {
+            let mut record_bytes = self.parse_name()?;
+
+            // add bytes past name bytes until data length field.
+            record_bytes.extend_from_slice(self.advance_n(8)?);
+
+            // get the data length amount as a u16.
+            let length = u16::from_be_bytes(self.advance_n(2)?
+                                                .try_into()
+                                                .unwrap());
+
+            let data = self.advance_n(length as usize)?;
+
+            // combine the [name + type, class, ttl] + [len + data]
+            record_bytes.append(&mut [&length.to_be_bytes()[..], data].concat());
+
+            records.push(Record::try_from(record_bytes.as_ref()).unwrap());
+        }
+
+        Ok(records)
     }
 
     /// Parses packet bytes and turns them in a `DNSPacket`. 
@@ -189,38 +201,14 @@ impl<'a> PacketParser<'a> {
         }
         
         /* Parse Answer Section */
-        let mut answers: Vec<Record> = Vec::with_capacity(header.an_count as usize);
-
-        for _ in 0..answers.capacity() {
-            let mut answers_bytes = self.parse_name()?;
-
-            answers_bytes.extend_from_slice(self.advance_n(8)?);
-
-            let length = u16::from_be_bytes(self.advance_n(2)?.try_into().unwrap());
-
-            let data = self.advance_n(length as usize)?;
-
-            answers_bytes.append(&mut [&length.to_be_bytes()[..], data].concat());
-
-            answers.push(Record::try_from(answers_bytes.as_ref()).unwrap());
-        }
+        let answers = self.parse_record(header.an_count as usize)?;
 
         /* Parse Authority Section */
-        let mut authorities: Vec<Record> = Vec::with_capacity(header.ns_count as usize);
+        let authorities = self.parse_record(header.ns_count as usize)?;
 
         /* Parse Additional Section */
-        let mut additionals: Vec<Record> = Vec::with_capacity(header.ar_count as usize);
+        let additionals = self.parse_record(header.ar_count as usize)?;
         
         Ok(DNSPacket::new(header, questions, answers, authorities, additionals))
-    }
-}
-
-pub fn test() {
-    let mut buf: [u8; 512] = [0; 512]; 
-    buf[..69].copy_from_slice(include_bytes!("response_packet.txt"));
-    let x = PacketParser::new(&buf).deserialize();
-    match x {
-        Ok(p) => println!("{:#X?}", p),
-        Err(e) => println!("\nError: {}", e)
     }
 }

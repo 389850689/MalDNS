@@ -65,7 +65,7 @@ fn main() {
 
         // if we didn't timeout, and the `DNSPacket` parsed without error.
         if let Some(mut response) = response {
-            // the following preforms a sneaky. 
+            // the following performs a sneaky. 
             if response.questions[0].get_name_as_string().contains("google.com") {
                  response.answers
                          .iter_mut()

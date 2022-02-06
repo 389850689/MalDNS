@@ -8,16 +8,16 @@ fn monolithize<T: DekuContainerWrite>(vector: &Vec<T>) -> Vec<u8> {
     vector.iter()
           .map(|s| s.to_bytes().unwrap())
           .reduce(|acc, i| { [acc, i].concat() })
-          .unwrap_or(vec![])
+          .unwrap_or(vec![]) // unwrap_or_default
 }
 
 #[derive(Debug, Default)]
-struct DNSPacket {
-    header: Header,
-    questions: Vec<Question>, 
-    answers: Vec<Record>,
-    authorities: Vec<Record>,
-    additionals: Vec<Record>,
+pub struct DNSPacket {
+    pub header: Header,
+    pub questions: Vec<Question>, 
+    pub answers: Vec<Record>,
+    pub authorities: Vec<Record>,
+    pub additionals: Vec<Record>,
 }
 
 impl DNSPacket {
@@ -43,7 +43,7 @@ impl DNSPacket {
 
 #[derive(Debug, Default, PartialEq, DekuRead, DekuWrite)]
 #[deku(endian = "big")]
-struct Header {
+pub struct Header {
     // packet identifier
     id: u16,
         // flags
@@ -75,10 +75,10 @@ struct Header {
 
 #[derive(Debug, Default, PartialEq, DekuRead, DekuWrite)]
 #[deku(endian = "big")]
-struct Question {
+pub struct Question {
     // domain name
     #[deku(until = "|v: &u8| *v == 0")] 
-    name: Vec<u8>,
+    pub name: Vec<u8>,
     // type of query
     ty: u16,
     // class of query 
@@ -87,7 +87,7 @@ struct Question {
 
 #[derive(Debug, Default, PartialEq, DekuRead, DekuWrite)]
 #[deku(endian = "big")]
-struct Record {
+pub struct Record {
     // domain name
     // TODO: create a temp variable whose value is parse_name.len().
     name: u16,  
@@ -101,10 +101,10 @@ struct Record {
     len: u16,
     // the data for an A record
     #[deku(count = "len", endian = "big")]
-    data: Vec<u8>
+    pub data: Vec<u8>
 }
 
-struct PacketParser<'a> {
+pub struct PacketParser<'a> {
     /// A buffer that *should* contain a DNS packet.
     buffer: &'a [u8; 512],
     /// A pointer to an unparsed packet position.
@@ -114,7 +114,7 @@ struct PacketParser<'a> {
 }
 
 impl<'a> PacketParser<'a> {
-    pub fn new(buffer: &'a [u8; 512])-> Self {
+    pub fn new(buffer: &'a [u8; 512]) -> Self {
         Self { buffer, current: 0, decompress_map: HashMap::new() }
     } 
  
@@ -217,7 +217,7 @@ impl<'a> PacketParser<'a> {
 
             questions.push(Question::try_from(question_bytes.as_ref()).unwrap());
         }
-        
+
         /* Parse Answer Section */
         let answers = self.parse_record(header.an_count as usize)?;
         /* Parse Authority Section */

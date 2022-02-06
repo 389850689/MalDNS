@@ -45,7 +45,7 @@ impl DNSPacket {
 #[deku(endian = "big")]
 pub struct Header {
     // packet identifier
-    id: u16,
+    pub id: u16,
         // flags
         #[deku(bits = "1")]
         qr: u8,     // query response 
@@ -83,6 +83,16 @@ pub struct Question {
     ty: u16,
     // class of query 
     class: u16,
+}
+
+impl Question {
+    /// Interpret the name in the DNS packet format as a rust string.
+    pub fn get_name_as_string(&self) -> String {
+        self.name[1..self.name.len() - 1]
+            .iter()
+            .map(|&c| if c < 0x30 { '.' } else { c as char })
+            .collect::<String>()
+    }
 }
 
 #[derive(Debug, Default, PartialEq, DekuRead, DekuWrite)]
